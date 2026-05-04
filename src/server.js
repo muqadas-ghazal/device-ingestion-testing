@@ -1,7 +1,14 @@
+require("dotenv").config({ quiet: true });
+
 const http = require("http");
 const net = require("net");
 const express = require("express");
 const { WebSocket, WebSocketServer } = require("ws");
+const {
+  hasDatabaseConfig,
+  checkDatabaseConnection,
+  closeDatabaseConnection
+} = require("./db");
 
 const HTTP_PORT = Number(process.env.PORT || 3000);
 const TCP_PORT = Number(process.env.TCP_PORT || 3001);
@@ -56,6 +63,21 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/health/db", async (_req, res) => {
+  if (!hasDatabaseConfig()) {
+    res.status(503).json({ ok: false, database: "not_configured" });
+    return;
+  }
+
+  try {
+    await checkDatabaseConnection();
+    res.json({ ok: true, database: "connected" });
+  } catch (error) {
+    console.error("[db] health check failed", error);
+    res.status(503).json({ ok: false, database: "unavailable" });
+  }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: WS_PATH });
 const tcpServer = net.createServer(handleTcpConnection);
@@ -88,14 +110,7 @@ wss.on("connection", (socket, request) => {
   });
 });
 
-server.listen(HTTP_PORT, "0.0.0.0", () => {
-  console.log(`HTTP server listening on http://0.0.0.0:${HTTP_PORT}`);
-  console.log(`WebSocket endpoint listening on ws://0.0.0.0:${HTTP_PORT}${WS_PATH}`);
-});
-
-tcpServer.listen(TCP_PORT, "0.0.0.0", () => {
-  console.log(`TCP endpoint listening on 0.0.0.0:${TCP_PORT}`);
-});
+start();
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
@@ -343,9 +358,44 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function shutdown() {
+async function start() {
+  await initializeDatabase();
+
+  server.listen(HTTP_PORT, "0.0.0.0", () => {
+    console.log(`HTTP server listening on http://0.0.0.0:${HTTP_PORT}`);
+    console.log(`WebSocket endpoint listening on ws://0.0.0.0:${HTTP_PORT}${WS_PATH}`);
+  });
+
+  tcpServer.listen(TCP_PORT, "0.0.0.0", () => {
+    console.log(`TCP endpoint listening on 0.0.0.0:${TCP_PORT}`);
+  });
+}
+
+async function initializeDatabase() {
+  if (!hasDatabaseConfig()) {
+    console.warn("[db] Azure SQL env vars are incomplete; database connection disabled.");
+    return;
+  }
+
+  try {
+    await checkDatabaseConnection();
+    console.log("[db] Azure SQL connection ready");
+  } catch (error) {
+    console.error("[db] Azure SQL connection failed", error.message);
+  }
+}
+
+async function shutdown() {
   console.log("Shutting down ingestion server...");
   wss.close();
   tcpServer.close();
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    try {
+      await closeDatabaseConnection();
+    } catch (error) {
+      console.error("[db] failed to close connection", error);
+    } finally {
+      process.exit(0);
+    }
+  });
 }
