@@ -1,7 +1,9 @@
+// Purpose: Manage the shared Azure SQL connection pool for the ingestion server.
 const sql = require("mssql");
 
 let poolPromise = null;
 
+// Purpose: Check whether all required Azure SQL environment variables are present.
 function hasDatabaseConfig() {
   return Boolean(
     process.env.AZURE_SQL_SERVER &&
@@ -11,6 +13,7 @@ function hasDatabaseConfig() {
   );
 }
 
+// Purpose: Build the mssql connection configuration from environment variables.
 function getDatabaseConfig() {
   return {
     server: process.env.AZURE_SQL_SERVER,
@@ -30,6 +33,7 @@ function getDatabaseConfig() {
   };
 }
 
+// Purpose: Return a reusable connected SQL pool, creating it on first use.
 async function getPool() {
   if (!hasDatabaseConfig()) {
     throw new Error("Azure SQL configuration is incomplete.");
@@ -38,6 +42,7 @@ async function getPool() {
   if (!poolPromise) {
     const pool = new sql.ConnectionPool(getDatabaseConfig());
 
+    // Purpose: Reset the cached pool on connection pool errors.
     pool.on("error", (error) => {
       console.error("[db] connection pool error", error);
       poolPromise = null;
@@ -49,12 +54,14 @@ async function getPool() {
   return poolPromise;
 }
 
+// Purpose: Run a lightweight query to confirm the database is reachable.
 async function checkDatabaseConnection() {
   const pool = await getPool();
   const result = await pool.request().query("SELECT 1 AS ok");
   return result.recordset[0]?.ok === 1;
 }
 
+// Purpose: Close the shared SQL pool during graceful shutdown.
 async function closeDatabaseConnection() {
   if (!poolPromise) {
     return;
