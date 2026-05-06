@@ -4,7 +4,7 @@ const { sql, getPool } = require("../db");
 const DEVICE_CACHE_TTL_MS = Number(process.env.DEVICE_CACHE_TTL_MS || 60_000);
 const deviceCache = new Map();
 
-// Purpose: Resolve an incoming IMEI to device metadata and the assigned patient context.
+// Purpose: Resolve an incoming IMEI to DigimedDevices metadata and PatientAssignedDevice patient context.
 async function findDeviceContextByImei(imei) {
   const normalizedImei = normalizeImei(imei);
 
@@ -19,6 +19,7 @@ async function findDeviceContextByImei(imei) {
   }
 
   const pool = await getPool();
+  const assignment = await findLatestAssignmentByImei(pool, normalizedImei);
   const deviceResult = await pool.request()
     .input("imei", sql.VarChar(32), normalizedImei)
     .query(`
@@ -29,25 +30,16 @@ async function findDeviceContextByImei(imei) {
     `);
 
   const device = deviceResult.recordset[0];
-  console.log(device)
 
   if (!device) {
     return cacheDeviceContext(normalizedImei, null);
   }
 
-  const assignment = await findLatestAssignment(pool, {
-    imei: normalizedImei,
-    devicePrimaryKey: device.ID,
-    legacyDeviceId: device.DeviceID
-  });
-  const patientId = assignment?.PatientID ?? device.PatientID ?? null;
-  const validPatientId = await resolveVitalsPatientId(pool, patientId);
-
   return cacheDeviceContext(normalizedImei, {
     devicePk: device.ID,
     legacyDeviceId: device.DeviceID,
     deviceType: device.DeviceType,
-    patientId: validPatientId,
+    patientId: assignment?.PatientID ?? null,
     imei: normalizedImei
   });
 }
@@ -89,49 +81,18 @@ async function insertPatientVital(vital) {
     `);
 }
 
-// Purpose: Find the latest patient assignment for a device using the FK-first lookup.
-async function findLatestAssignment(pool, device) {
-  const devicePrimaryKey = String(device.devicePrimaryKey);
-  const legacyDeviceId = device.legacyDeviceId == null ? "" : String(device.legacyDeviceId);
-
+// Purpose: Find the latest patient assignment where PatientAssignedDevice.DeviceID stores the device IMEI.
+async function findLatestAssignmentByImei(pool, imei) {
   const result = await pool.request()
-    .input("fkDeviceId", sql.Int, device.devicePrimaryKey)
-    .input("imei", sql.NVarChar(255), device.imei)
-    .input("devicePrimaryKey", sql.NVarChar(255), devicePrimaryKey)
-    .input("legacyDeviceId", sql.NVarChar(255), legacyDeviceId)
+    .input("imei", sql.NVarChar(255), imei)
     .query(`
       SELECT TOP 1 PatientID
       FROM PatientAssignedDevice
-      WHERE FK_device_id = @fkDeviceId
-        OR DeviceID IN (@imei, @devicePrimaryKey, @legacyDeviceId)
+      WHERE DeviceID = @imei
       ORDER BY updatedAt DESC, ID DESC
     `);
 
   return result.recordset[0] || null;
-}
-
-// Purpose: Keep only PatientIDs that exist in the Patients table used by vitals.
-async function resolveVitalsPatientId(pool, patientId) {
-  if (patientId == null) {
-    return null;
-  }
-
-  const result = await pool.request()
-    .input("patientId", sql.Int, patientId)
-    .query(`
-      SELECT TOP 1 PatientID
-      FROM Patients
-      WHERE PatientID = @patientId
-    `);
-
-  if (result.recordset[0]) {
-    return patientId;
-  }
-
-  console.warn(
-    `[db] assigned PatientID=${patientId} skipped: not present in Patients`
-  );
-  return null;
 }
 
 // Purpose: Cache resolved device context briefly to reduce repeated lookup queries.
