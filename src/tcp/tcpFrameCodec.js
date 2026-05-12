@@ -17,13 +17,19 @@ function createTcpFrameDecoder(options = {}) {
         const magicIndex = findTcpMagicIndex(pending);
 
         if (magicIndex === -1) {
-          warnings.push(`discarded ${pending.length} byte(s) without FCAF header`);
-          pending = Buffer.alloc(0);
+          const keepBytes = pending[pending.length - 1] === 0xfc ? 1 : 0;
+          const discarded = pending.subarray(0, pending.length - keepBytes);
+
+          if (discarded.length) {
+            warnings.push(buildDecodeWarning("missing_fcaf_header", discarded));
+          }
+
+          pending = keepBytes ? pending.subarray(pending.length - keepBytes) : Buffer.alloc(0);
           break;
         }
 
         if (magicIndex > 0) {
-          warnings.push(`discarded ${magicIndex} byte(s) before FCAF header`);
+          warnings.push(buildDecodeWarning("bytes_before_fcaf_header", pending.subarray(0, magicIndex)));
           pending = pending.subarray(magicIndex);
         }
 
@@ -34,7 +40,10 @@ function createTcpFrameDecoder(options = {}) {
         const jsonLength = pending.readUInt16BE(2);
 
         if (jsonLength <= 0 || jsonLength > maxJsonBytes) {
-          warnings.push(`invalid frame length ${jsonLength}; dropping header`);
+          warnings.push(buildDecodeWarning("invalid_frame_length", pending.subarray(0, TCP_HEADER_BYTES), {
+            frameLength: jsonLength,
+            maxJsonBytes
+          }));
           pending = pending.subarray(2);
           continue;
         }
@@ -82,6 +91,52 @@ function findTcpMagicIndex(buffer) {
   }
 
   return -1;
+}
+
+// Purpose: Build structured diagnostics for bytes that cannot be decoded as an FCAF frame.
+function buildDecodeWarning(reason, bytes, details = {}) {
+  return {
+    reason,
+    discardedBytes: bytes.length,
+    hexPreview: bytes.toString("hex", 0, Math.min(bytes.length, 96)),
+    asciiPreview: toPrintableAscii(bytes.subarray(0, 96)),
+    hint: guessPayloadType(bytes),
+    ...details
+  };
+}
+
+// Purpose: Make raw byte previews readable in logs without control characters.
+function toPrintableAscii(buffer) {
+  return Array.from(buffer, (byte) => {
+    if (byte >= 0x20 && byte <= 0x7e) {
+      return String.fromCharCode(byte);
+    }
+
+    return ".";
+  }).join("");
+}
+
+// Purpose: Identify common accidental traffic sent to the raw TCP device port.
+function guessPayloadType(buffer) {
+  const ascii = toPrintableAscii(buffer.subarray(0, 16)).trimStart();
+
+  if (/^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH)\s/i.test(ascii)) {
+    return "looks_like_http_request";
+  }
+
+  if (buffer.length >= 2 && buffer[0] === 0x16 && buffer[1] === 0x03) {
+    return "looks_like_tls_handshake";
+  }
+
+  if (ascii.startsWith("{") || ascii.startsWith("[")) {
+    return "looks_like_unframed_json";
+  }
+
+  if (ascii.startsWith("SSH-")) {
+    return "looks_like_ssh_probe";
+  }
+
+  return "unknown_non_fcaf_payload";
 }
 
 module.exports = {

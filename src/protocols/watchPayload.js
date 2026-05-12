@@ -26,7 +26,7 @@ const ACTIVITY_EVENT_TYPES = new Set([
 
 const SYSTEM_EVENT_TYPES = new Set(["login", "heartbeat"]);
 
-// Purpose: Process one decoded watch payload from TCP or WebSocket.
+// Purpose: Process one decoded watch payload from TCP ingestion.
 function handleWatchPayload(message, transport) {
   const normalized = normalizeWatchMessage(message);
   const eventType = normalized.type;

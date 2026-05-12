@@ -5,14 +5,13 @@ This project receives Wonlex/health-watch data directly from devices, acknowledg
 The main goal is:
 
 ```text
-watch device -> TCP/WebSocket ingestion -> normalize packet -> calculate device/patient -> store vitals -> frontend/backend can read from DB
+watch device -> TCP ingestion -> normalize packet -> calculate device/patient -> store vitals -> frontend/backend can read from DB
 ```
 
 ## What It Supports
 
 - HTTP health checks and utility APIs.
 - TCP device ingestion using the Wonlex `FCAF` framed JSON protocol.
-- WebSocket device ingestion for plain JSON or TCP-framed JSON forwarded over WebSocket.
 - Azure SQL connection pooling.
 - Creating rows in `DigimedDevices`.
 - Storing incoming vitals in `DigimedPatientVitals`.
@@ -29,7 +28,7 @@ upBatch
 
 ## Runtime Flow
 
-1. A device sends a packet over TCP or WebSocket.
+1. A device sends an `FCAF` framed JSON packet over raw TCP.
 2. The transport layer decodes the packet into JSON.
 3. The protocol layer normalizes the message and sends an ACK back to the device.
 4. The vitals service checks whether the packet is a supported vital event.
@@ -53,8 +52,8 @@ Create a local `.env` file:
 ```env
 PORT=3000
 TCP_PORT=3001
-WS_PATH=/watch
 MAX_JSON_BYTES=65535
+WATCH_PACKET_DEBUG=0
 AZURE_SQL_SERVER=your-server.database.windows.net
 AZURE_SQL_DATABASE=your-database
 AZURE_SQL_USER=your-user
@@ -75,9 +74,16 @@ Default endpoints:
 HTTP:      http://localhost:3000
 Health:    http://localhost:3000/health
 DB Health: http://localhost:3000/health/db
-WebSocket: ws://localhost:3000/watch
 TCP:       localhost:3001
 ```
+
+To inspect real watch packets while you are learning the device format, enable packet debug logs:
+
+```powershell
+$env:WATCH_PACKET_DEBUG="1"; npm start
+```
+
+The TCP terminal will print raw chunk bytes, decoded frame bytes, printable ASCII, and parsed JSON keys/type/IMEI when the packet is JSON.
 
 ## HTTP APIs
 
@@ -104,7 +110,7 @@ The API rejects duplicate IMEIs.
 
 `src/server.js`
 
-Starts the app. It loads `.env`, configures Express, mounts routes, attaches WebSocket ingestion, starts the TCP server, checks DB connectivity, and handles shutdown.
+Starts the app. It loads `.env`, configures Express, mounts routes, starts the TCP server, checks DB connectivity, and handles shutdown.
 
 `src/db.js`
 
@@ -132,21 +138,13 @@ JSON payload
 
 Accepts TCP connections, decodes frames, parses JSON, handles watch payloads, and sends framed ACK/error responses.
 
-`src/websocket/watchSocketServer.js`
-
-Accepts WebSocket device connections, decodes messages, handles watch payloads, and sends ACK/error responses.
-
 `src/protocols/watchPayload.js`
 
 Normalizes watch payloads, categorizes event types, logs packets, and triggers persistence.
 
 `src/protocols/watchAck.js`
 
-Builds protocol ACK/error payloads for TCP and WebSocket responses.
-
-`src/protocols/watchWebSocketDecoder.js`
-
-Supports both plain WebSocket JSON and TCP-framed binary data sent over WebSocket.
+Builds protocol ACK/error payloads for TCP responses.
 
 `src/protocols/jsonPayload.js`
 
