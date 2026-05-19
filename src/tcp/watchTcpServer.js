@@ -47,7 +47,9 @@ function handleTcpConnection(socket, options) {
 
       logPacketDebug(remote, "parsed_json", frame, message);
       const normalized = handleWatchPayload(message, "tcp");
-      socket.write(encodeTcpFrame(buildAckPayload(normalized)));
+      const ack = buildAckPayload(normalized);
+      logAckWrite(remote, ack, "framed");
+      socket.write(encodeTcpFrame(ack));
       sendLoginConfigurationCommands(socket, remote, normalized, options, configuredImeis);
     }
 
@@ -79,11 +81,21 @@ function sendLoginConfigurationCommands(socket, remote, message, options, config
 
   for (const command of commands) {
     console.log(
-      `[${new Date().toISOString()}] [tcp] ${remote} sending command ` +
+      `[${new Date().toISOString()}] [tcp] ${remote} sending frequency/config command ` +
         `type=${command.type} imei=${command.imei} ident=${command.ident}`
     );
     socket.write(encodeTcpFrame(command));
   }
+}
+
+// Purpose: Make server responses visible while validating device protocol behavior.
+function logAckWrite(remote, ack, packetStyle) {
+  const type = ack.type || ack.data?.type || "unknown";
+  const status = ack.data?.status || "-";
+  console.log(
+    `[${new Date().toISOString()}] [tcp] ${remote} sending ${type} acknowledgement ` +
+      `style=${packetStyle} imei=${ack.imei || ack.data?.imei || "-"} ident=${ack.ident || "-"} status=${status}`
+  );
 }
 
 // Purpose: Support both the documented login type and common vendor naming variants.
