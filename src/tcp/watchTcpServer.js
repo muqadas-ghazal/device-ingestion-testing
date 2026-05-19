@@ -7,6 +7,7 @@ const {
 const { parseJsonBuffer } = require("../protocols/jsonPayload");
 const { handleWatchPayload } = require("../protocols/watchPayload");
 const { buildAckPayload, buildErrorPayload } = require("../protocols/watchAck");
+const { buildLoginConfigurationCommands } = require("../protocols/watchCommands");
 
 const PACKET_DEBUG = process.env.WATCH_PACKET_DEBUG === "1";
 
@@ -20,6 +21,7 @@ function createWatchTcpServer(options = {}) {
 function handleTcpConnection(socket, options) {
   const remote = getSocketRemote(socket);
   const decoder = createTcpFrameDecoder({ maxJsonBytes: options.maxJsonBytes });
+  const configuredImeis = new Set();
 
   console.log(`[tcp] device connected from ${remote}`);
 
@@ -46,6 +48,7 @@ function handleTcpConnection(socket, options) {
       logPacketDebug(remote, "parsed_json", frame, message);
       const normalized = handleWatchPayload(message, "tcp");
       socket.write(encodeTcpFrame(buildAckPayload(normalized)));
+      sendLoginConfigurationCommands(socket, remote, normalized, options, configuredImeis);
     }
 
     for (const warning of decoded.warnings) {
@@ -62,6 +65,31 @@ function handleTcpConnection(socket, options) {
   socket.on("error", (error) => {
     console.error(`[tcp] socket error from ${remote}`, error);
   });
+}
+
+// Purpose: Push measurement/location settings once after a device login is acknowledged.
+function sendLoginConfigurationCommands(socket, remote, message, options, configuredImeis) {
+  if (!isLoginMessage(message) || !message.imei || configuredImeis.has(message.imei)) {
+    return;
+  }
+
+  configuredImeis.add(message.imei);
+
+  const commands = buildLoginConfigurationCommands(message.imei, options);
+
+  for (const command of commands) {
+    console.log(
+      `[${new Date().toISOString()}] [tcp] ${remote} sending command ` +
+        `type=${command.type} imei=${command.imei} ident=${command.ident}`
+    );
+    socket.write(encodeTcpFrame(command));
+  }
+}
+
+// Purpose: Support both the documented login type and common vendor naming variants.
+function isLoginMessage(message) {
+  const type = String(message.type || "").trim().toLowerCase();
+  return type === "login" || type === "uplogin";
 }
 
 // Purpose: Print raw packet details only when investigating real watch traffic.
