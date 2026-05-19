@@ -15,6 +15,18 @@ const { createWatchTcpServer } = require("./tcp/watchTcpServer");
 const HTTP_PORT = Number(process.env.PORT || 3000);
 const TCP_PORT = Number(process.env.TCP_PORT || 3001);
 const MAX_JSON_BYTES = Number(process.env.MAX_JSON_BYTES || 1024 * 1024);
+const WATCH_COMMAND_OPTIONS = {
+  autoConfigureOnLogin: process.env.WATCH_AUTO_CONFIGURE_ON_LOGIN,
+  healthIntervalMinutes: process.env.WATCH_HEALTH_INTERVAL_MINUTES,
+  heartRateIntervalMinutes: process.env.WATCH_HEART_RATE_INTERVAL_MINUTES,
+  bpIntervalMinutes: process.env.WATCH_BP_INTERVAL_MINUTES,
+  boIntervalMinutes: process.env.WATCH_BO_INTERVAL_MINUTES,
+  temperatureIntervalMinutes: process.env.WATCH_TEMPERATURE_INTERVAL_MINUTES,
+  boFrequency: process.env.WATCH_BO_FREQUENCY,
+  temperatureFrequency: process.env.WATCH_TEMPERATURE_FREQUENCY,
+  includeLocation: process.env.WATCH_INCLUDE_LOCATION,
+  locationIntervalSeconds: process.env.WATCH_LOCATION_INTERVAL_SECONDS
+};
 
 const app = express();
 
@@ -34,7 +46,10 @@ app.use("/health", createHealthRouter());
 app.use("/api/digimed-devices", createDigimedDevicesRouter());
 
 const server = http.createServer(app);
-const tcpServer = createWatchTcpServer({ maxJsonBytes: MAX_JSON_BYTES });
+const tcpServer = createWatchTcpServer({
+  maxJsonBytes: MAX_JSON_BYTES,
+  ...WATCH_COMMAND_OPTIONS
+});
 
 start();
 

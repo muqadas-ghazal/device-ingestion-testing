@@ -54,6 +54,9 @@ PORT=3000
 TCP_PORT=3001
 MAX_JSON_BYTES=65535
 WATCH_PACKET_DEBUG=0
+WATCH_AUTO_CONFIGURE_ON_LOGIN=1
+WATCH_HEALTH_INTERVAL_MINUTES=1
+WATCH_LOCATION_INTERVAL_SECONDS=60
 AZURE_SQL_SERVER=your-server.database.windows.net
 AZURE_SQL_DATABASE=your-database
 AZURE_SQL_USER=your-user
@@ -84,6 +87,27 @@ $env:WATCH_PACKET_DEBUG="1"; npm start
 ```
 
 The TCP terminal will print raw chunk bytes, decoded frame bytes, printable ASCII, and parsed JSON keys/type/IMEI when the packet is JSON.
+
+When `WATCH_AUTO_CONFIGURE_ON_LOGIN` is enabled, the TCP server sends these Wonlex downlink
+commands after a device login is acknowledged:
+
+```text
+deviceMeasuringFrequency: upHeartRate, upBP, upBO, upBodyTemperature
+locationInterval
+```
+
+Useful optional overrides:
+
+```env
+WATCH_HEART_RATE_INTERVAL_MINUTES=1
+WATCH_BP_INTERVAL_MINUTES=1
+WATCH_BO_INTERVAL_MINUTES=1
+WATCH_TEMPERATURE_INTERVAL_MINUTES=1
+WATCH_BO_FREQUENCY=5
+WATCH_TEMPERATURE_FREQUENCY=5
+WATCH_INCLUDE_LOCATION=1
+WATCH_LOCATION_INTERVAL_SECONDS=60
+```
 
 ## HTTP APIs
 
