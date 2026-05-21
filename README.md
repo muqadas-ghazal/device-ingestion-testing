@@ -5,7 +5,7 @@ This project receives Wonlex/health-watch data directly from devices, acknowledg
 The main goal is:
 
 ```text
-watch device -> TCP ingestion -> normalize packet -> calculate device/patient -> store vitals -> frontend/backend can read from DB
+watch device -> TCP ingestion -> normalize packet -> ACK device -> emit realtime vitals -> store vitals
 ```
 
 ## What It Supports
@@ -15,6 +15,8 @@ watch device -> TCP ingestion -> normalize packet -> calculate device/patient ->
 - Azure SQL connection pooling.
 - Creating rows in `DigimedDevices`.
 - Storing incoming vitals in `DigimedPatientVitals`.
+- Realtime Socket.IO events for Bubble/frontend live monitoring.
+- Swagger/OpenAPI docs at `/api-docs` and `/openapi.json`.
 
 Supported vital events:
 
@@ -31,10 +33,13 @@ upBatch
 1. A device sends an `FCAF` framed JSON packet over raw TCP.
 2. The transport layer decodes the packet into JSON.
 3. The protocol layer normalizes the message and sends an ACK back to the device.
-4. The vitals service checks whether the packet is a supported vital event.
-5. The repository finds the device by `IMEI` in `DigimedDevices`.
-6. It finds the assigned patient using `PatientAssignedDevice.FK_device_id = DigimedDevices.ID`.
-7. It inserts the vital into `DigimedPatientVitals`.
+4. The TCP layer sends an ACK back to the device immediately.
+5. In the background, the vitals service checks whether the packet is a supported vital event.
+6. The repository finds the device by `IMEI` in `DigimedDevices`.
+7. It finds the assigned patient using `PatientAssignedDevice.DeviceID = IMEI`.
+8. It finds the patient's facility using `Patients.PatientID -> Patients.FacilityID`.
+9. It emits a Socket.IO `watch:vital` event before inserting into the database.
+10. It inserts the vital into `DigimedPatientVitals`.
 
 Example stored `liveVitals` values:
 
@@ -54,6 +59,7 @@ PORT=3000
 TCP_PORT=3001
 MAX_JSON_BYTES=65535
 WATCH_PACKET_DEBUG=0
+SOCKET_CORS_ORIGIN=*
 WATCH_AUTO_CONFIGURE_ON_LOGIN=1
 WATCH_HEALTH_INTERVAL_MINUTES=1
 WATCH_LOCATION_INTERVAL_SECONDS=60
@@ -77,8 +83,85 @@ Default endpoints:
 HTTP:      http://localhost:3000
 Health:    http://localhost:3000/health
 DB Health: http://localhost:3000/health/db
+Swagger:   http://localhost:3000/api-docs
+OpenAPI:   http://localhost:3000/openapi.json
 TCP:       localhost:3001
 ```
+
+## Realtime Socket.IO For Bubble
+
+The frontend connects to the same HTTP origin that serves the API:
+
+```js
+const socket = io("https://your-api-domain");
+```
+
+Professional live monitoring screen:
+
+```js
+socket.emit("watch:subscribe", {
+  scope: "facility",
+  facilityId: 10
+});
+```
+
+Patient detail screen:
+
+```js
+socket.emit("watch:subscribe", {
+  scope: "patient",
+  patientId: 123
+});
+```
+
+Optional device debug screen:
+
+```js
+socket.emit("watch:subscribe", {
+  scope: "device",
+  imei: "865028000000306"
+});
+```
+
+Listen for vitals:
+
+```js
+socket.on("watch:vital", (event) => {
+  console.log(event);
+});
+```
+
+The server uses these rooms:
+
+```text
+facility:{facilityId}  all patients in a facility
+patient:{patientId}    one patient detail screen
+device:{imei}          one watch/device debug view
+```
+
+Example realtime payload:
+
+```json
+{
+  "category": "health",
+  "type": "upHeartRate",
+  "imei": "865028000000306",
+  "patientId": 123,
+  "facilityId": 10,
+  "deviceId": "865028000000306",
+  "fkDeviceId": 45,
+  "deviceType": "wonlex_watch",
+  "deviceModel": "HW20",
+  "liveVitals": {
+    "heartRate": 100
+  },
+  "measuredAt": "2026-05-21T07:08:58.000Z",
+  "receivedAt": "2026-05-21T07:09:00.000Z"
+}
+```
+
+When `watch:subscribe` is called, the server leaves previous watch rooms by default. Pass
+`replace: false` if the same socket intentionally needs multiple subscriptions.
 
 To inspect real watch packets while you are learning the device format, enable packet debug logs:
 
@@ -176,7 +259,15 @@ Safe JSON parsing and invalid payload logging helpers.
 
 `src/services/wonlexVitalsService.js`
 
-Converts supported device events into `liveVitals` JSON and expands `upBatch` into multiple readings.
+Converts supported device events into `liveVitals` JSON, emits realtime events, and expands `upBatch` into multiple readings.
+
+`src/realtime/watchRealtime.js`
+
+Initializes Socket.IO, manages facility/patient/device rooms, and emits `watch:vital`.
+
+`src/docs/openapi.js`
+
+Contains the Swagger/OpenAPI document and the Socket.IO integration guide for Bubble developers.
 
 `src/repositories/wonlexVitalsRepository.js`
 

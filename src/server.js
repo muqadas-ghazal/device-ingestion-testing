@@ -3,6 +3,7 @@ require("dotenv").config({ quiet: true });
 
 const http = require("http");
 const express = require("express");
+const swaggerUi = require("swagger-ui-express");
 const {
   hasDatabaseConfig,
   checkDatabaseConnection,
@@ -11,6 +12,8 @@ const {
 const { createHealthRouter } = require("./routes/health.routes");
 const { createDigimedDevicesRouter } = require("./routes/digimedDevices.routes");
 const { createWatchTcpServer } = require("./tcp/watchTcpServer");
+const { openApiDocument } = require("./docs/openapi");
+const { initializeWatchRealtime } = require("./realtime/watchRealtime");
 
 const HTTP_PORT = Number(process.env.PORT || 3000);
 const TCP_PORT = Number(process.env.TCP_PORT || 3001);
@@ -38,14 +41,22 @@ app.get("/", (_req, res) => {
     ok: true,
     service: "health-watch-direct-ingestion",
     tcpPort: TCP_PORT,
+    docs: "/api-docs",
+    socketEvents: {
+      subscribe: "watch:subscribe",
+      vital: "watch:vital"
+    },
     message: `Configure Wonlex devices to connect to HOST:${TCP_PORT} over raw TCP`
   });
 });
 
 app.use("/health", createHealthRouter());
 app.use("/api/digimed-devices", createDigimedDevicesRouter());
+app.get("/openapi.json", (_req, res) => res.json(openApiDocument));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
 
 const server = http.createServer(app);
+initializeWatchRealtime(server);
 const tcpServer = createWatchTcpServer({
   maxJsonBytes: MAX_JSON_BYTES,
   ...WATCH_COMMAND_OPTIONS
