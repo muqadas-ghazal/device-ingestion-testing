@@ -35,7 +35,8 @@ function handleWatchPayload(message, transport) {
 
   console.log(`[${receivedAt}] [${transport}] [${category}:${eventType || "missing-type"}]`);
   console.dir(normalized, { depth: null });
-  persistWatchPayload(normalized);
+  // Purpose: Let the TCP layer ACK first; realtime and DB work continue in the background.
+  setImmediate(() => persistWatchPayload(normalized));
 
   return normalized;
 }

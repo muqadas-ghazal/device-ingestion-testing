@@ -3,6 +3,7 @@ const {
   findDeviceContextByImei,
   insertPatientVital
 } = require("../repositories/wonlexVitalsRepository");
+const { emitVitalEvent } = require("../realtime/watchRealtime");
 
 const VITAL_EVENT_TYPES = new Set([
   "upHeartRate",
@@ -12,7 +13,7 @@ const VITAL_EVENT_TYPES = new Set([
   "upBatch"
 ]);
 
-// Purpose: Persist supported vital packets after resolving their device context.
+// Purpose: Resolve context, emit realtime vitals, then persist supported vital packets.
 async function persistVitalPayload(payload) {
   if (!VITAL_EVENT_TYPES.has(payload.type)) {
     return;
@@ -28,18 +29,21 @@ async function persistVitalPayload(payload) {
   const device = await findDeviceContextByImei(imei);
 
   if (!device) {
-    console.warn(`[db] vital payload skipped: no DigimedDevices row for imei=${imei}`);
+    console.warn(`[vitals] payload skipped: no DigimedDevices row for imei=${imei}`);
     return;
   }
 
   const readings = buildVitalReadings(payload);
 
   if (!readings.length) {
-    console.warn(`[db] vital payload skipped: unsupported vital shape type=${payload.type}`);
+    console.warn(`[vitals] payload skipped: unsupported vital shape type=${payload.type}`);
     return;
   }
 
   for (const reading of readings) {
+    const event = buildRealtimeVitalEvent(payload, device, reading, imei);
+    emitVitalEvent(event);
+
     await insertPatientVital({
       deviceId: imei,
       deviceType: device.deviceType || payload.deviceModel || "wonlex_watch",
@@ -51,7 +55,29 @@ async function persistVitalPayload(payload) {
     });
   }
 
-  console.log(`[db] stored ${readings.length} vital reading(s) imei=${imei}`);
+  console.log(
+    `[db] stored ${readings.length} vital reading(s) imei=${imei} ` +
+      `patientId=${device.patientId ?? "-"} facilityId=${device.facilityId ?? "-"}`
+  );
+}
+
+// Purpose: Shape the Socket.IO event exactly once so Bubble receives stable fields.
+function buildRealtimeVitalEvent(payload, device, reading, imei) {
+  return {
+    category: "health",
+    type: payload.type,
+    imei,
+    patientId: device.patientId,
+    facilityId: device.facilityId,
+    deviceId: imei,
+    fkDeviceId: device.devicePk,
+    deviceType: device.deviceType || payload.deviceModel || "wonlex_watch",
+    deviceModel: payload.deviceModel,
+    liveVitals: reading.liveVitals,
+    measuredAt: reading.measuredAt.toISOString(),
+    receivedAt: new Date().toISOString(),
+    raw: payload
+  };
 }
 
 // Purpose: Convert a single payload into one or more normalized vital readings.
@@ -165,5 +191,7 @@ function normalizeString(value) {
 }
 
 module.exports = {
-  persistVitalPayload
+  persistVitalPayload,
+  buildVitalReadings,
+  buildLiveVitals
 };

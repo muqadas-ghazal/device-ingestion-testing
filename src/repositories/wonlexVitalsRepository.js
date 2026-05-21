@@ -4,7 +4,7 @@ const { sql, getPool } = require("../db");
 const DEVICE_CACHE_TTL_MS = Number(process.env.DEVICE_CACHE_TTL_MS || 60_000);
 const deviceCache = new Map();
 
-// Purpose: Resolve an incoming IMEI to DigimedDevices metadata and PatientAssignedDevice patient context.
+// Purpose: Resolve an incoming IMEI to device, patient, and facility context for realtime and DB writes.
 async function findDeviceContextByImei(imei) {
   const normalizedImei = normalizeImei(imei);
 
@@ -40,6 +40,7 @@ async function findDeviceContextByImei(imei) {
     legacyDeviceId: device.DeviceID,
     deviceType: device.DeviceType,
     patientId: assignment?.PatientID ?? null,
+    facilityId: assignment?.FacilityID ?? null,
     imei: normalizedImei
   });
 }
@@ -81,15 +82,19 @@ async function insertPatientVital(vital) {
     `);
 }
 
-// Purpose: Find the latest patient assignment where PatientAssignedDevice.DeviceID stores the device IMEI.
+// Purpose: Find the latest patient assignment and its facility where DeviceID stores the device IMEI.
 async function findLatestAssignmentByImei(pool, imei) {
   const result = await pool.request()
     .input("imei", sql.NVarChar(255), imei)
     .query(`
-      SELECT TOP 1 PatientID
-      FROM PatientAssignedDevice
-      WHERE DeviceID = @imei
-      ORDER BY updatedAt DESC, ID DESC
+      SELECT TOP 1
+        pad.PatientID,
+        p.FacilityID
+      FROM PatientAssignedDevice pad
+      LEFT JOIN Patients p
+        ON p.PatientID = pad.PatientID
+      WHERE pad.DeviceID = @imei
+      ORDER BY pad.updatedAt DESC, pad.ID DESC
     `);
 
   return result.recordset[0] || null;
